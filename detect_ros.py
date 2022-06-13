@@ -24,14 +24,13 @@ Usage - formats:
                                          yolov5s_edgetpu.tflite     # TensorFlow Edge TPU
 """
 import sys
+import os
 from unicodedata import name
-# TODO fix me
-sys.path.insert(1, '/home/tiejean/projects/ObjectSLAMDataset/third-party/amrl_msgs/src')
+sys.path.insert(1, os.path.abspath('../amrl_msgs/src'))
 from amrl_msgs.msg import *
-# sys.path.insert(1, '/home/tiejean/projects/ObjectSLAMDataset/third-party/amrl_msgs/src/amrl_msgs/msg')
-# from _BBox2DMsg import BBox2DMsg
 from utils.augmentations import letterbox
 import numpy as np
+from sensor_msgs.msg import Image
 
 import rospy
 from std_msgs.msg import Float32MultiArray
@@ -39,7 +38,6 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
 import argparse
-import os
 from pathlib import Path
 
 import torch
@@ -211,10 +209,14 @@ def callback(img_msg):
         label, conf, xyxy = bbox
         bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
     pub1.publish(bbox_arr_msg)
+    im0_msg = bridge.cv2_to_imgmsg(im0, encoding='bgr8')
+    im0_msg.header = img_msg.header
+    pub2.publish(im0_msg)
 
 if __name__ == "__main__":
     opt = parse_opt()
     rospy.init_node("input", anonymous=True)
     rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
     pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=1)
+    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=1)
     rospy.spin()

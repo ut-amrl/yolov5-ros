@@ -60,6 +60,10 @@ opt = None
 pub1 = None
 pub2 = None
 
+g_device = None
+g_imgsz  = None
+g_model  = None
+
 def parse_labels_from_file(names):
     file = open(names, "r")
     if file.closed:
@@ -89,19 +93,9 @@ def run(im0,
         iou_thres=0.45,  # NMS IOU threshold
         max_det=1000,  # maximum detections per image
         device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-        view_img=False,  # show results
-        save_txt=False,  # save results to *.txt
-        save_conf=False,  # save confidences in --save-txt labels
-        save_crop=False,  # save cropped prediction boxes
-        nosave=False,  # do not save images/videos
         classes=None,  # filter by class: --class 0, or --class 0 2 3
         agnostic_nms=False,  # class-agnostic NMS
         augment=False,  # augmented inference
-        visualize=False,  # visualize features
-        update=False,  # update all models
-        project=ROOT / 'runs/detect',  # save results to project/name
-        name='exp',  # save results to project/name
-        exist_ok=False,  # existing project/name ok, do not increment
         line_thickness=3,  # bounding box thickness (pixels)
         hide_labels=False,  # hide labels
         hide_conf=False,  # hide confidences
@@ -109,26 +103,20 @@ def run(im0,
         dnn=False,  # use OpenCV DNN for ONNX inference
 ):
     # Load model
-    device = select_device(device)
-    model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
-    stride, names, pt = model.stride, model.names, model.pt
-    imgsz = check_img_size(imgsz, s=stride)  # check image size
-    labels_dict = parse_labels_from_list(names)
+    stride, names, pt = g_model.stride, g_model.names, g_model.pt
 
     # Dataloader
-    bs = 1
-    im = letterbox(im0, imgsz, stride, pt)[0]
+    im = letterbox(im0, g_imgsz, stride, pt)[0]
     # Convert
     im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
     im = np.ascontiguousarray(im)
 
     # Run inference
-    model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
     dt, seen = [0.0, 0.0, 0.0], 0
 
     t1 = time_sync()
-    im = torch.from_numpy(im).to(device)
-    im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
+    im = torch.from_numpy(im).to(g_device)
+    im = im.half() if g_model.fp16 else im.float()  # uint8 to fp16/32
     im /= 255  # 0 - 255 to 0.0 - 1.0
     if len(im.shape) == 3:
         im = im[None]  # expand for batch dimclassifier
@@ -136,7 +124,7 @@ def run(im0,
     dt[0] += t2 - t1
 
     # Inference
-    pred = model(im, augment=augment, visualize=False)
+    pred = g_model(im, augment=augment, visualize=False)
     t3 = time_sync()
     dt[1] += t3 - t2
 
@@ -170,19 +158,9 @@ def parse_opt():
     parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--view-img', action='store_true', help='show results')
-    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
-    parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
-    parser.add_argument('--save-crop', action='store_true', help='save cropped prediction boxes')
-    parser.add_argument('--nosave', action='store_true', help='do not save images/videos')
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --classes 0, or --classes 0 2 3')
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
-    parser.add_argument('--visualize', action='store_true', help='visualize features')
-    parser.add_argument('--update', action='store_true', help='update all models')
-    parser.add_argument('--project', default=ROOT / 'runs/detect', help='save results to project/name')
-    parser.add_argument('--name', default='exp', help='save results to project/name')
-    parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--line-thickness', default=3, type=int, help='bounding box thickness (pixels)')
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
@@ -192,10 +170,6 @@ def parse_opt():
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
     return opt
-
-def main(opt):
-    check_requirements(exclude=('tensorboard', 'thop'))
-    run(**vars(opt))
 
 def callback(img_msg):
     check_requirements(exclude=('tensorboard', 'thop'))
@@ -212,8 +186,26 @@ def callback(img_msg):
     im0_msg.header = img_msg.header
     pub2.publish(im0_msg)
 
+def prepare(opt):
+    global g_device
+    global g_imgsz
+    global g_model
+
+    weights = vars(opt)["weights"]
+    imgsz   = vars(opt)["imgsz"]
+    data    = vars(opt)["data"]
+    device  = vars(opt)["device"]
+    half    = vars(opt)["half"]
+    dnn     = vars(opt)["dnn"]
+    g_device = select_device(device)
+    g_model = DetectMultiBackend(weights, device=g_device, dnn=dnn, data=data, fp16=half)
+    bs = 1
+    g_model.warmup(imgsz=(1 if g_model.pt else bs, 3, *imgsz))  
+    g_imgsz = check_img_size(imgsz, s=g_model.stride)
+
 if __name__ == "__main__":
     opt = parse_opt()
+    prepare(opt)
     rospy.init_node("input", anonymous=True)
     rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
     pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)

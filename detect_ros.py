@@ -115,7 +115,6 @@ def run(im0,
     imgsz = check_img_size(imgsz, s=stride)  # check image size
     labels_dict = parse_labels_from_list(names)
 
-    cv2.imwrite("im0.jpg", im0)
     # Dataloader
     bs = 1
     im = letterbox(im0, imgsz, stride, pt)[0]
@@ -217,6 +216,6 @@ if __name__ == "__main__":
     opt = parse_opt()
     rospy.init_node("input", anonymous=True)
     rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
-    pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=1)
-    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=1)
+    pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
+    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
     rospy.spin()

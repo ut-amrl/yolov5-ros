@@ -1,3 +1,31 @@
+## <div align="center">YOLOv5 ROS</div>
+## <div align="center">Requirements</div>
+First, please make sure all yolov5 requirements are satisfied. Second, make sure you have ros python client package installed. The inference codes requires `rospy`, `std_msgs` and `sensor_msgs`. 
+
+Finally, install https://github.com/ut-amrl/amrl_msgs/tree/taijing/semantic-slam. If you're running this repository independently, please modify the following line in `detect_ros.py` to point to your `amrl_msgs` source folder:
+```python
+sys.path.insert(1, os.path.abspath('../amrl_msgs/src'))
+```
+
+## <div align="center">Usage</div>
+First, remap your image topic to the following or modify this line inside the main function to the image topic you are publishing to:
+```python
+rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
+```
+
+In source folder, run:
+```bash
+python detect_ros.py --weights <path to weight .pt file> --img <img size> --conf <confidence level>
+```
+For example:
+```bash
+python detect_ros.py --weights runs/train/outdoors-yolo5s/weights/best.pt --img 1280 --conf 0.15
+```
+Then, you can subscribe `/yolov5/bboxes` and visualizations are published to `/yolov5/im0`.
+
+## <div align="center">Remarks</div>
+- Image size should be the larger one of your image dimensions. For example, if your image is 640x360, then you should run with flag `--img 640`. 
+
 <div align="center">
 <p>
    <a align="left" href="https://ultralytics.com/yolov5" target="_blank">

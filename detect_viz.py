@@ -23,8 +23,6 @@ Usage - formats:
                                          yolov5s.tflite             # TensorFlow Lite
                                          yolov5s_edgetpu.tflite     # TensorFlow Edge TPU
 """
-
-# python detect_ros.py --weights runs/train/outdoors-yolo5s2/weights/best.pt --img 1000 --conf 0.2
 import sys
 import os
 from unicodedata import name
@@ -33,6 +31,7 @@ from amrl_msgs.msg import *
 from utils.augmentations import letterbox
 import numpy as np
 from sensor_msgs.msg import Image
+import cv2
 
 import rospy
 from std_msgs.msg import Float32MultiArray
@@ -61,8 +60,6 @@ from utils.torch_utils import select_device, time_sync
 opt = None
 pub1 = None
 pub2 = None
-pub3 = None
-pub4 = None
 
 g_device = None
 g_imgsz  = None
@@ -87,33 +84,34 @@ def parse_labels_from_list(labels):
         labels_dict[id] = label
     return labels_dict
 
-def parse_raw_nn_output(img, prediction, names, conf_thres=0.01):
+# assume only 1 iamge
+def parse_raw(img, prediction, conf_thres=0.25):
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
     assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
 
+    output = [torch.zeros((0, 6), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):
         x = x[xc[xi]]
         if not x.shape[0]:
-            return [], img
+            return None
         boxes = xywh2xyxy(x[:, :4])
     boxes = torch.cat((boxes, x[:, 4:]), 1)
 
     img_viz = img.copy()
     annotator = Annotator(img_viz, line_width=1)
-    bboxes = []
     for box in boxes:
         # TODO fix me
-        for c, cls_conf in enumerate(box[5:]):
-            if (abs(cls_conf-torch.max(box[5:]))<conf_thres):
-                continue
-            conf = box[4].item()
-            label=f'{conf:.2f}'
-            bbox = [box[0], box[1], box[2], box[3]]
-            annotator.box_label(bbox, label, color=colors(c, True))
-            bboxes.append((names[c], cls_conf, bbox))
-    return bboxes, annotator.result()
+        cls = 0
+        for cls_conf in box[5:]:
+            if (abs(cls_conf-torch.max(box[5:]))<0.01):
+                break
+            cls += 1
+        conf = box[4].item()
+        label=f'{conf:.2f}'
+        annotator.box_label([box[0], box[1], box[2], box[3]], label, color=colors(cls, True))
+    return annotator.result()
 
 @torch.no_grad()
 def run(im0,
@@ -128,7 +126,7 @@ def run(im0,
         classes=None,  # filter by class: --class 0, or --class 0 2 3
         agnostic_nms=False,  # class-agnostic NMS
         augment=False,  # augmented inference
-        line_thickness=1,  # bounding box thickness (pixels)
+        line_thickness=3,  # bounding box thickness (pixels)
         hide_labels=False,  # hide labels
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
@@ -160,9 +158,8 @@ def run(im0,
     t3 = time_sync()
     dt[1] += t3 - t2
 
-    raw_conf_thres=0.025
-    bboxes_raw, im_raw = parse_raw_nn_output(im0, pred, names, raw_conf_thres)
-    print("#raw bboxes: ", len(bboxes_raw))
+    # Parse Raw Output
+    im_viz = parse_raw(im0, pred, conf_thres)
 
     # NMS
     pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
@@ -182,7 +179,7 @@ def run(im0,
             annotator.box_label(xyxy, label, color=colors(c, True))
             bboxes.append((names[c], conf, xyxy))
     im0 = annotator.result()
-    return bboxes, im0, bboxes_raw, im_raw
+    return bboxes, im0, im_viz
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -207,31 +204,26 @@ def parse_opt():
     print_args(vars(opt))
     return opt
 
-def callback(img_msg):
+def viz():
     check_requirements(exclude=('tensorboard', 'thop'))
-    # http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
-    bridge = CvBridge()
-    img = bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
-    bboxes, im0, bboxes_raw, im_raw = run(img, **vars(opt))
-    bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
-    for bbox in bboxes:
-        label, conf, xyxy = bbox
-        bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
-    pub1.publish(bbox_arr_msg)
-    bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
-    for bbox in bboxes_raw:
-        label, conf, xyxy = bbox
-        bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
-    pub3.publish(bbox_arr_msg)
+    # dir = "/robodata/taijing/ObjectSLAMDataset/yolo_viz/debug/"
+    dir = "images/"
+    in_dir        = dir+"inputs/"
+    im0_out_dir   = dir+"outputs/nms/"
+    imviz_out_dir = dir+"outputs/raw/"
 
-    im0_msg = bridge.cv2_to_imgmsg(im0, encoding='bgr8')
-    im0_msg.header = img_msg.header
-    pub2.publish(im0_msg)
-    im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
-    im_raw_msg.header = img_msg.header
-    pub4.publish(im_raw_msg)
-
-    cv2.imwrite("im_raw.png", im_raw)
+    for img_name in os.listdir(in_dir):
+        in_img_path    =in_dir       +img_name
+        out_nms_path   =im0_out_dir  +img_name
+        out_raw_path   =imviz_out_dir+img_name
+        img = cv2.imread(in_img_path, cv2.IMREAD_COLOR)
+        bboxes, im0, im_viz = run(img, **vars(opt))
+        cv2.imwrite(out_nms_path, im0)
+        if im_viz is not None:
+            cv2.imwrite(out_raw_path, im_viz)
+        else:
+            print("did not find any candidate boxes: " + img_name)
+    print("finishing...")
 
 def prepare(opt):
     global g_device
@@ -253,11 +245,4 @@ def prepare(opt):
 if __name__ == "__main__":
     opt = parse_opt()
     prepare(opt)
-    rospy.init_node("input", anonymous=True)
-    # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
-    rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
-    pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
-    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
-    pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=10)
-    pub4 = rospy.Publisher("/yolov5/im_raw", Image, queue_size=10)
-    rospy.spin()
+    viz()

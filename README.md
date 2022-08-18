@@ -21,7 +21,13 @@ For example:
 ```bash
 python detect_ros.py --weights runs/train/outdoors-yolo5s/weights/best.pt --img 1280 --conf 0.15
 ```
-Then, you can subscribe `/yolov5/bboxes` and visualizations are published to `/yolov5/im0`.
+If you're interesting in raw neural net output (before nms), you need to adjust `raw_conf_thres` to the values you're interested in in `detect_ros.py`.
+
+Publishers:
+- `/yolov5/bboxes`: yolo bounding boxes for each subscribed image
+- `/yolov5/im0`: visualization
+- `/yolov5/raw_bboxes`: bounding boxes before nms
+- `/yolov5/raw_im`: visualization for raw bounding boxes
 
 ## <div align="center">Remarks</div>
 - Image size should be the larger one of your image dimensions. For example, if your image is 640x360, then you should run with flag `--img 640`. 

@@ -68,6 +68,8 @@ g_device = None
 g_imgsz  = None
 g_model  = None
 
+pub_raw = True
+
 def parse_labels_from_file(names):
     file = open(names, "r")
     if file.closed:
@@ -160,9 +162,13 @@ def run(im0,
     t3 = time_sync()
     dt[1] += t3 - t2
 
-    raw_conf_thres=0.025
-    bboxes_raw, im_raw = parse_raw_nn_output(im0, pred, names, raw_conf_thres)
-    print("#raw bboxes: ", len(bboxes_raw))
+    raw_conf_thres=0.05
+    # bboxes_raw = None
+    im_raw = None
+    if pub_raw:
+        raw_conf_thres=conf_thres
+        bboxes_raw, im_raw = parse_raw_nn_output(im0, pred, names, raw_conf_thres)
+        print("#raw bboxes: ", len(bboxes_raw))
 
     # NMS
     pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
@@ -176,6 +182,8 @@ def run(im0,
     annotator = Annotator(im0, line_width=line_thickness, example=str(names))
     bboxes = []
     if len(det):
+        print(im.shape[2:], im0.shape)
+        det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
         for *xyxy, conf, cls in reversed(det):
             c = int(cls)  # integer class
             label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
@@ -218,20 +226,20 @@ def callback(img_msg):
         label, conf, xyxy = bbox
         bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
     pub1.publish(bbox_arr_msg)
-    bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
-    for bbox in bboxes_raw:
-        label, conf, xyxy = bbox
-        bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
-    pub3.publish(bbox_arr_msg)
+    if bboxes_raw is not None:
+        bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
+        for bbox in bboxes_raw:
+            label, conf, xyxy = bbox
+            bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+        pub3.publish(bbox_arr_msg)
 
     im0_msg = bridge.cv2_to_imgmsg(im0, encoding='bgr8')
     im0_msg.header = img_msg.header
     pub2.publish(im0_msg)
-    im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
-    im_raw_msg.header = img_msg.header
-    pub4.publish(im_raw_msg)
-
-    cv2.imwrite("im_raw.png", im_raw)
+    if im_raw is not None:
+        im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
+        im_raw_msg.header = img_msg.header
+        pub4.publish(im_raw_msg)
 
 def prepare(opt):
     global g_device
@@ -256,6 +264,7 @@ if __name__ == "__main__":
     rospy.init_node("input", anonymous=True)
     # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
     rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
+    # rospy.Subscriber("/zed2i/zed_node/left/image_rect_color", Image, callback)
     pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
     pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
     pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=10)

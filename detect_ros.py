@@ -89,7 +89,8 @@ def parse_labels_from_list(labels):
         labels_dict[id] = label
     return labels_dict
 
-def parse_raw_nn_output(img, prediction, names, conf_thres=0.01):
+def parse_raw_nn_output(img, prediction, names, im_shape, im0_shape, conf_thres=0.01):
+    # det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
@@ -100,6 +101,7 @@ def parse_raw_nn_output(img, prediction, names, conf_thres=0.01):
         if not x.shape[0]:
             return [], img
         boxes = xywh2xyxy(x[:, :4])
+        boxes = scale_coords(im_shape, boxes, im0_shape).round()
     boxes = torch.cat((boxes, x[:, 4:]), 1)
 
     img_viz = img.copy()
@@ -162,12 +164,12 @@ def run(im0,
     t3 = time_sync()
     dt[1] += t3 - t2
 
-    raw_conf_thres=0.05
-    # bboxes_raw = None
+    raw_conf_thres=conf_thres
+    bboxes_raw = None
     im_raw = None
     if pub_raw:
         raw_conf_thres=conf_thres
-        bboxes_raw, im_raw = parse_raw_nn_output(im0, pred, names, raw_conf_thres)
+        bboxes_raw, im_raw = parse_raw_nn_output(im0, pred, names, im_shape=im.shape[2:], im0_shape=im0.shape, conf_thres=raw_conf_thres)
         print("#raw bboxes: ", len(bboxes_raw))
 
     # NMS
@@ -182,7 +184,6 @@ def run(im0,
     annotator = Annotator(im0, line_width=line_thickness, example=str(names))
     bboxes = []
     if len(det):
-        print(im.shape[2:], im0.shape)
         det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
         for *xyxy, conf, cls in reversed(det):
             c = int(cls)  # integer class
@@ -263,8 +264,8 @@ if __name__ == "__main__":
     prepare(opt)
     rospy.init_node("input", anonymous=True)
     # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
-    rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
-    # rospy.Subscriber("/zed2i/zed_node/left/image_rect_color", Image, callback)
+    # rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
+    rospy.Subscriber("/zed2i/zed_node/left/image_rect_color", Image, callback)
     pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
     pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
     pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=10)

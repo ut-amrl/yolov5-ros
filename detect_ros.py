@@ -29,7 +29,9 @@ import sys
 import os
 from unicodedata import name
 sys.path.insert(1, os.path.abspath('../amrl_msgs/src'))
+# sys.path.insert(1, os.path.abspath('/home/amanda/workspaces/amrl_libs/amrl_msgs/src'))
 from amrl_msgs.msg import *
+from amrl_msgs.srv import *
 from utils.augmentations import letterbox
 import numpy as np
 from sensor_msgs.msg import Image, CompressedImage
@@ -293,18 +295,34 @@ def prepare(opt):
     g_model.warmup(imgsz=(1 if g_model.pt else bs, 3, *imgsz))  
     g_imgsz = check_img_size(imgsz, s=g_model.stride)
 
+def handleObjectDetectionRequest(req):
+    check_requirements(exclude=('tensorboard', 'thop'))
+    # http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
+    bridge = CvBridge()
+    img = bridge.imgmsg_to_cv2(req.query_image, desired_encoding='bgr8')
+    bboxes, im0, bboxes_raw, im_raw = run(img, **vars(opt))
+    bbox_arr_msg = BBox2DArrayMsg(header=req.query_image.header)
+    for bbox in bboxes:
+        label, conf, xyxy = bbox
+        bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+    bbox_arr_msg_raw = BBox2DArrayMsg(header=req.query_image.header)
+    for bbox in bboxes_raw:
+        label, conf, xyxy = bbox
+        bbox_arr_msg_raw.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+    return ObjectDetectionSrvResponse(bounding_boxes=bbox_arr_msg, nms_removed_bounding_boxes=bbox_arr_msg_raw)
+
 if __name__ == "__main__":
     opt = parse_opt()
     prepare(opt)
     rospy.init_node("input", anonymous=True)
     # rospy.Subscriber("/stereo/left/image_raw", Image, callback)
     # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
-    # rospy.Subscriber("/zed/zed_node/rgb/image_rect_color", Image, callback)
     # rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
-    # rospy.Subscriber("/zed/zed_node/left/image_rect_color", Image, callback)
     rospy.Subscriber("/zed/zed_node/left/image_rect_color/compressed", CompressedImage, compressed_callback)
-    pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=1)
-    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=1)
-    pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=1)
-    pub4 = rospy.Publisher("/yolov5/im_raw", Image, queue_size=1)
+    pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
+    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
+    pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=10)
+    pub4 = rospy.Publisher("/yolov5/im_raw", Image, queue_size=10)
+
+    obj_det_service = rospy.Service('yolov5_detect_objs', ObjectDetectionSrv, handleObjectDetectionRequest)
     rospy.spin()

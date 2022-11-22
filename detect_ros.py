@@ -32,7 +32,7 @@ sys.path.insert(1, os.path.abspath('../amrl_msgs/src'))
 from amrl_msgs.msg import *
 from utils.augmentations import letterbox
 import numpy as np
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 
 import rospy
 from std_msgs.msg import Float32MultiArray
@@ -68,7 +68,7 @@ g_device = None
 g_imgsz  = None
 g_model  = None
 
-pub_raw = True
+pub_raw = False
 
 def parse_labels_from_file(names):
     file = open(names, "r")
@@ -206,7 +206,7 @@ def parse_opt():
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --classes 0, or --classes 0 2 3')
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
-    parser.add_argument('--line-thickness', default=3, type=int, help='bounding box thickness (pixels)')
+    parser.add_argument('--line-thickness', default=1, type=int, help='bounding box thickness (pixels)')
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
@@ -216,12 +216,16 @@ def parse_opt():
     print_args(vars(opt))
     return opt
 
-def callback(img_msg):
+def compressed_callback(img_msg):
     check_requirements(exclude=('tensorboard', 'thop'))
-    # http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
-    bridge = CvBridge()
-    img = bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
+    # http://wiki.ros.org/rospy_tutorials/Tutorials/WritingImagePublisherSubscriber
+    np_arr = np.frombuffer(img_msg.data, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    # cv2.imwrite("img.png", img)
+
     bboxes, im0, bboxes_raw, im_raw = run(img, **vars(opt))
+
+    bridge = CvBridge()
     bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
     for bbox in bboxes:
         label, conf, xyxy = bbox
@@ -233,7 +237,7 @@ def callback(img_msg):
             label, conf, xyxy = bbox
             bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
         pub3.publish(bbox_arr_msg)
-
+    
     im0_msg = bridge.cv2_to_imgmsg(im0, encoding='bgr8')
     im0_msg.header = img_msg.header
     pub2.publish(im0_msg)
@@ -241,6 +245,36 @@ def callback(img_msg):
         im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
         im_raw_msg.header = img_msg.header
         pub4.publish(im_raw_msg)
+    # cv2.imwrite("im0.png", im0)
+
+
+def callback(img_msg):
+    check_requirements(exclude=('tensorboard', 'thop'))
+    # http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
+    bridge = CvBridge()
+    img = bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
+    bboxes, im0, bboxes_raw, im_raw = run(img, **vars(opt))
+
+    bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
+    for bbox in bboxes:
+        label, conf, xyxy = bbox
+        bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+    pub1.publish(bbox_arr_msg)
+    if bboxes_raw is not None:
+        bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
+        for bbox in bboxes_raw:
+            label, conf, xyxy = bbox
+            bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+        pub3.publish(bbox_arr_msg)
+    
+    im0_msg = bridge.cv2_to_imgmsg(im0, encoding='bgr8')
+    im0_msg.header = img_msg.header
+    pub2.publish(im0_msg)
+    if im_raw is not None:
+        im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
+        im_raw_msg.header = img_msg.header
+        pub4.publish(im_raw_msg)
+    cv2.imwrite("im0.png", im0)
 
 def prepare(opt):
     global g_device
@@ -263,11 +297,14 @@ if __name__ == "__main__":
     opt = parse_opt()
     prepare(opt)
     rospy.init_node("input", anonymous=True)
+    # rospy.Subscriber("/stereo/left/image_raw", Image, callback)
     # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
+    # rospy.Subscriber("/zed/zed_node/rgb/image_rect_color", Image, callback)
     # rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
-    rospy.Subscriber("/zed2i/zed_node/left/image_rect_color", Image, callback)
-    pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
-    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
-    pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=10)
-    pub4 = rospy.Publisher("/yolov5/im_raw", Image, queue_size=10)
+    # rospy.Subscriber("/zed/zed_node/left/image_rect_color", Image, callback)
+    rospy.Subscriber("/zed/zed_node/left/image_rect_color/compressed", CompressedImage, compressed_callback)
+    pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=1)
+    pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=1)
+    pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=1)
+    pub4 = rospy.Publisher("/yolov5/im_raw", Image, queue_size=1)
     rospy.spin()

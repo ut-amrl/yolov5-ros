@@ -28,8 +28,8 @@ Usage - formats:
 import sys
 import os
 from unicodedata import name
-sys.path.insert(1, os.path.abspath('../amrl_msgs/src'))
-# sys.path.insert(1, os.path.abspath('/home/amanda/workspaces/amrl_libs/amrl_msgs/src'))
+import roslib
+roslib.load_manifest('amrl_msgs')
 from amrl_msgs.msg import *
 from amrl_msgs.srv import *
 from utils.augmentations import letterbox
@@ -273,7 +273,9 @@ if __name__ == "__main__":
     prepare(opt)
     rospy.init_node("input", anonymous=True)
     # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
-    rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
+    # rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
+    # rospy.Subscriber("/camera/left/image_raw", Image, callback)
+    rospy.Subscriber("/camera/right/image_raw", Image, callback)
     pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
     pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
     pub3 = rospy.Publisher("/yolov5/bboxes_raw", BBox2DArrayMsg, queue_size=10)

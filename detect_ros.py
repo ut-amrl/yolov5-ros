@@ -70,6 +70,8 @@ g_device = None
 g_imgsz  = None
 g_model  = None
 
+pub_raw = False
+
 def parse_labels_from_file(names):
     file = open(names, "r")
     if file.closed:
@@ -89,7 +91,7 @@ def parse_labels_from_list(labels):
         labels_dict[id] = label
     return labels_dict
 
-def parse_raw_nn_output(img, prediction, names, conf_thres=0.01):
+def parse_raw_nn_output(img, prediction, names, im_shape, im0_shape, conf_thres=0.01):
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
@@ -100,6 +102,7 @@ def parse_raw_nn_output(img, prediction, names, conf_thres=0.01):
         if not x.shape[0]:
             return [], img
         boxes = xywh2xyxy(x[:, :4])
+        boxes = scale_coords(im_shape, boxes, im0_shape).round()
     boxes = torch.cat((boxes, x[:, 4:]), 1)
 
     img_viz = img.copy()
@@ -162,9 +165,13 @@ def run(im0,
     t3 = time_sync()
     dt[1] += t3 - t2
 
-    raw_conf_thres=0.025
-    bboxes_raw, im_raw = parse_raw_nn_output(im0, pred, names, raw_conf_thres)
-    print("#raw bboxes: ", len(bboxes_raw))
+    raw_conf_thres=conf_thres
+    bboxes_raw = None
+    im_raw = None
+    if pub_raw:
+        raw_conf_thres=conf_thres
+        bboxes_raw, im_raw = parse_raw_nn_output(im0, pred, names, im_shape=im.shape[2:], im0_shape=im0.shape, conf_thres=raw_conf_thres)
+        print("#raw bboxes: ", len(bboxes_raw))
 
     # NMS
     pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
@@ -178,6 +185,7 @@ def run(im0,
     annotator = Annotator(im0, line_width=line_thickness, example=str(names))
     bboxes = []
     if len(det):
+        det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
         for *xyxy, conf, cls in reversed(det):
             c = int(cls)  # integer class
             label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
@@ -220,20 +228,21 @@ def callback(img_msg):
         label, conf, xyxy = bbox
         bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
     pub1.publish(bbox_arr_msg)
-    bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
-    for bbox in bboxes_raw:
-        label, conf, xyxy = bbox
-        bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
-    pub3.publish(bbox_arr_msg)
+    if bboxes_raw is not None:
+        bbox_arr_msg = BBox2DArrayMsg(header=img_msg.header)
+        for bbox in bboxes_raw:
+            label, conf, xyxy = bbox
+            bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+        pub3.publish(bbox_arr_msg)
 
     im0_msg = bridge.cv2_to_imgmsg(im0, encoding='bgr8')
     im0_msg.header = img_msg.header
     pub2.publish(im0_msg)
-    im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
-    im_raw_msg.header = img_msg.header
-    pub4.publish(im_raw_msg)
-
-    cv2.imwrite("im_raw.png", im_raw)
+    if im_raw is not None:
+        im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
+        im_raw_msg.header = img_msg.header
+        pub4.publish(im_raw_msg)
+    # cv2.imwrite("im_raw.png", im_raw)
 
 def prepare(opt):
     global g_device
@@ -262,19 +271,18 @@ def handleObjectDetectionRequest(req):
     for bbox in bboxes:
         label, conf, xyxy = bbox
         bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
-    bbox_arr_msg_raw = BBox2DArrayMsg(header=req.query_image.header)
-    for bbox in bboxes_raw:
-        label, conf, xyxy = bbox
-        bbox_arr_msg_raw.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+    bbox_arr_msg_raw = None
+    if pub_raw:
+        bbox_arr_msg_raw = BBox2DArrayMsg(header=req.query_image.header)
+        for bbox in bboxes_raw:
+            label, conf, xyxy = bbox
+            bbox_arr_msg_raw.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
     return ObjectDetectionSrvResponse(bounding_boxes=bbox_arr_msg, nms_removed_bounding_boxes=bbox_arr_msg_raw)
 
 if __name__ == "__main__":
     opt = parse_opt()
     prepare(opt)
     rospy.init_node("input", anonymous=True)
-    # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
-    # rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
-    # rospy.Subscriber("/camera/left/image_raw", Image, callback)
     rospy.Subscriber("/camera/right/image_raw", Image, callback)
     pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
     pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)

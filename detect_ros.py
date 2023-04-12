@@ -92,7 +92,6 @@ def parse_labels_from_list(labels):
     return labels_dict
 
 def parse_raw_nn_output(img, prediction, names, im_shape, im0_shape, conf_thres=0.01):
-    # det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
@@ -276,7 +275,7 @@ def callback(img_msg):
         im_raw_msg = bridge.cv2_to_imgmsg(im_raw, encoding='bgr8')
         im_raw_msg.header = img_msg.header
         pub4.publish(im_raw_msg)
-    cv2.imwrite("im0.png", im0)
+    # cv2.imwrite("im0.png", im0)
 
 def prepare(opt):
     global g_device
@@ -305,20 +304,18 @@ def handleObjectDetectionRequest(req):
     for bbox in bboxes:
         label, conf, xyxy = bbox
         bbox_arr_msg.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
-    bbox_arr_msg_raw = BBox2DArrayMsg(header=req.query_image.header)
-    for bbox in bboxes_raw:
-        label, conf, xyxy = bbox
-        bbox_arr_msg_raw.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
+    bbox_arr_msg_raw = None
+    if pub_raw:
+        bbox_arr_msg_raw = BBox2DArrayMsg(header=req.query_image.header)
+        for bbox in bboxes_raw:
+            label, conf, xyxy = bbox
+            bbox_arr_msg_raw.bboxes.append(BBox2DMsg(label=label, conf=conf, xyxy=xyxy))
     return ObjectDetectionSrvResponse(bounding_boxes=bbox_arr_msg, nms_removed_bounding_boxes=bbox_arr_msg_raw)
 
 if __name__ == "__main__":
     opt = parse_opt()
     prepare(opt)
     rospy.init_node("input", anonymous=True)
-    # rospy.Subscriber("/stereo/left/image_raw", Image, callback)
-    # rospy.Subscriber("/camera/rgb/image_raw", Image, callback)
-    # rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color", Image, callback)
-    # rospy.Subscriber("/camera/left/image_raw", Image, callback)
     rospy.Subscriber("/camera/right/image_raw", Image, callback)
     pub1 = rospy.Publisher("/yolov5/bboxes", BBox2DArrayMsg, queue_size=10)
     pub2 = rospy.Publisher("/yolov5/im0", Image, queue_size=10)
